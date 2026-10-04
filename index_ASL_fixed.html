@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASL Recognition</title>
+    
+    <!-- Load TensorFlow.js and Teachable Machine libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #f3f4f6;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: #1f2937;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 5px;
+            text-align: center;
+        }
+
+        p {
+            font-size: 0.9rem;
+            color: #4b5563;
+            margin-top: 0;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        #start-btn {
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 1rem;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.2s;
+            width: 100%;
+            max-width: 200px;
+            margin-bottom: 20px;
+        }
+
+        #start-btn:active {
+            background-color: #1d4ed8;
+        }
+
+        #webcam-container {
+            width: 100%;
+            max-width: 320px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            aspect-ratio: 1 / 1;
+        }
+
+        #webcam-container canvas {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover;
+        }
+
+        #label-container {
+            margin-top: 20px;
+            width: 100%;
+            max-width: 320px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .prediction-row {
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .label-text {
+            font-weight: 600;
+            text-transform: capitalize;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .progress-bar-bg {
+            background-color: #e5e7eb;
+            border-radius: 9999px;
+            height: 8px;
+            width: 100%;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            background-color: #10b981;
+            height: 100%;
+            width: 0%;
+            transition: width 0.1s ease-out;
+        }
+
+        #status {
+            font-size: 0.85rem;
+            color: #6b7280;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>ASL Recognition</h1>
+    <p>Real-time ASL recognition using your camera</p>
+
+    <button id="start-btn" onclick="init()">Start Camera</button>
+    
+    <div id="webcam-container"></div>
+    <div id="label-container"></div>
+    <div id="status"></div>
+
+    <script type="text/javascript">
+        // Your specific Teachable Machine model link
+        const URL = "https://teachablemachine.withgoogle.com/models/exd4qpK0K/";
+
+        let model, webcam, labelContainer, maxPredictions;
+
+        // Initialize the image model and webcam
+        async function init() {
+            const startBtn = document.getElementById("start-btn");
+            const statusDiv = document.getElementById("status");
+            
+            startBtn.disabled = true;
+            startBtn.innerText = "Loading...";
+            statusDiv.innerText = "Loading machine learning model...";
+
+            try {
+                const modelURL = URL + "model.json";
+                const metadataURL = URL + "metadata.json";
+
+                // Load the model and metadata
+                model = await tmImage.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+
+                statusDiv.innerText = "Setting up camera...";
+
+                // Setup webcam parameters (width, height, flip)
+                const size = 320;
+                const flip = true; 
+                webcam = new tmImage.Webcam(size, size, flip);
+                
+                // Request access to webcam (will use front camera by default if flip is true)
+                await webcam.setup({ facingMode: "user" }); 
+                await webcam.play();
+                
+                // Remove loading indicators
+                startBtn.style.display = "none";
+                statusDiv.style.display = "none";
+
+                // Append webcam canvas to container
+                document.getElementById("webcam-container").appendChild(webcam.canvas);
+                
+                // Create prediction elements dynamically
+                labelContainer = document.getElementById("label-container");
+                for (let i = 0; i < maxPredictions; i++) {
+                    const row = document.createElement("div");
+                    row.className = "prediction-row";
+                    row.innerHTML = `
+                        <div class="label-text">
+                            <span class="class-name">...</span>
+                            <span class="percentage">0%</span>
+                        </div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill"></div>
+                        </div>
+                    `;
+                    labelContainer.appendChild(row);
+                }
+
+                // Start loop
+                window.requestAnimationFrame(loop);
+
+            } catch (error) {
+                console.error(error);
+                statusDiv.innerText = "Camera access denied or error loading model. Make sure you are using HTTPS.";
+                startBtn.disabled = false;
+                startBtn.innerText = "Try Again";
+            }
+        }
+
+        async function loop() {
+            webcam.update(); // Update webcam frame
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
+
+        // Run the webcam frame through the model
+        async function predict() {
+            const prediction = await model.predict(webcam.canvas);
+            
+            for (let i = 0; i < maxPredictions; i++) {
+                const className = prediction[i].className;
+                const probability = prediction[i].probability;
+                const percentage = Math.round(probability * 100);
+                
+                const row = labelContainer.childNodes[i];
+                row.querySelector(".class-name").innerText = className;
+                row.querySelector(".percentage").innerText = percentage + "%";
+                row.querySelector(".progress-bar-fill").style.width = percentage + "%";
+            }
+        }
+    </script>
+</body>
+</html>
